@@ -51,7 +51,14 @@ const PATHS = {
       <path d="M3 9h18M3 15h18M9 3v18" />
     </>
   ),
-  trash: <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+  trash: <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />,
+  logout: (
+    <>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <path d="M16 17l5-5-5-5" />
+      <path d="M21 12H9" />
+    </>
+  )
 };
 
 export default function Icon({ name }) {

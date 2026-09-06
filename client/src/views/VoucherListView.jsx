@@ -10,7 +10,6 @@ export default function VoucherListView() {
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [confirmId, setConfirmId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -18,7 +17,8 @@ export default function VoucherListView() {
       try {
         const data = await api.vouchers(state.year);
         if (cancelled) return;
-        setRows(data);
+        if (data?.status === 401) return;
+        setRows(Array.isArray(data) ? data : []);
         setError(null);
       } catch {
         if (!cancelled) setError("Kunde inte hämta verifikationer.");
@@ -28,28 +28,22 @@ export default function VoucherListView() {
   }, [state.year, state.tick]);
 
   async function openVoucher(id) {
-    setOpen(await api.voucher(id));
-    setConfirmId(null);
+    const v = await api.voucher(id);
+    if (!v || v.ok === false) {
+      setError(v?.error || "Verifikationen finns inte.");
+      return;
+    }
+    setOpen(v);
   }
 
   async function reverse(id) {
     setBusy(true);
     setError(null);
+    setMsg(null);
     const res = await api.reverseVoucher(id, todayIso(state.year));
     setBusy(false);
     if (!res.ok) { setError(res.error); return; }
-    state.refresh();
-  }
-
-  async function remove(id) {
-    setBusy(true);
-    setError(null);
-    const res = await api.deleteVoucher(id);
-    setBusy(false);
-    if (!res.ok) { setError(res.error); setConfirmId(null); return; }
-    setConfirmId(null);
-    if (open?.id === id) setOpen(null);
-    setMsg(`${res.voucherNo} är borttagen.`);
+    setMsg(`Rättelse bokförd som ${res.voucherNo}. Historik raderas inte.`);
     state.refresh();
   }
 
@@ -57,18 +51,20 @@ export default function VoucherListView() {
     <div className="stack">
       <div>
         <h2>Verifikationer</h2>
-        <p className="lede">Grundbok i tidsordning. Felbokning i öppen period kan tas bort. I låst period bokförs en rättelse i stället.</p>
+        <p className="lede">
+          Grundbok i tidsordning. Verifikationer raderas inte — bokför en rättelse i en öppen period.
+        </p>
       </div>
-      {error && <p className="stamp">{error}</p>}
+      {error && <p className="stamp" role="alert">{error}</p>}
       {msg && <p className="ledger">{msg}</p>}
       <div className="table-wrap">
         <table className="data" style={{ minWidth: "45rem" }}>
           <thead>
-            <tr><th>Nr</th><th>Datum</th><th>Text</th><th className="right">Debet</th><th className="right">Kredit</th><th>Balans</th><th>Åtgärd</th></tr>
+            <tr><th>Nr</th><th>Datum</th><th>Text</th><th className="right">Debet</th><th className="right">Kredit</th><th>Balans</th></tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={7} className="muted">Inga verifikationer i år. Bokför från underlag.</td></tr>
+              <tr><td colSpan={6} className="muted">Inga verifikationer i år. Bokför från underlag.</td></tr>
             )}
             {rows.map((v) => {
               const balanced = toOre(v.debit) === toOre(v.credit);
@@ -80,16 +76,6 @@ export default function VoucherListView() {
                   <td className="right tabular">{formatSek(v.debit)}</td>
                   <td className="right tabular">{formatSek(v.credit)}</td>
                   <td className={balanced ? "ledger" : "stamp"}>{balanced ? "Ja" : "Nej"}</td>
-                  <td className="actions">
-                    {confirmId === v.id ? (
-                      <>
-                        <button type="button" className="btn btn-danger" disabled={busy} onClick={() => remove(v.id)}>Bekräfta</button>
-                        <button type="button" className="btn btn-ghost" onClick={() => setConfirmId(null)}>Avbryt</button>
-                      </>
-                    ) : (
-                      <button type="button" className="btn btn-text-danger" disabled={busy} onClick={() => setConfirmId(v.id)}>Ta bort</button>
-                    )}
-                  </td>
                 </tr>
               );
             })}
@@ -115,11 +101,6 @@ export default function VoucherListView() {
           </table>
           <div className="templates">
             <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => reverse(open.id)}>Bokför rättelse</button>
-            {confirmId === open.id ? (
-              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => remove(open.id)}>Bekräfta borttagning</button>
-            ) : (
-              <button type="button" className="btn btn-text-danger" disabled={busy} onClick={() => setConfirmId(open.id)}>Ta bort</button>
-            )}
           </div>
         </article>
       )}

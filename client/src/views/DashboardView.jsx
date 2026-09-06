@@ -57,9 +57,11 @@ export default function DashboardView() {
           {pipe.documentCount === 0 && (
             <p className="muted">Inga underlag ännu. Börja i Uppdrag, ta sedan emot underlag och bokför dem — debet måste vara lika med kredit.</p>
           )}
-          {pipe.documentCount > 0 && (pipe.unbooked > 0 || !pipe.bankOk) && (
+          {pipe.documentCount > 0 && !pipe.canLock && !pipe.locked && (
             <p className="stamp">
-              Nästa steg: {pipe.unbooked > 0 ? `bokför ${pipe.unbooked} underlag` : "stäm av banken"} innan perioden kan låsas.
+              Nästa steg: {pipe.unbooked > 0
+                ? `bokför ${pipe.unbooked} underlag`
+                : "stäm av bank, kund, leverantör och moms"} innan perioden kan låsas.
             </p>
           )}
         </>
