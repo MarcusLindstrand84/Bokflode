@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, onUnauthorized } from "./api.js";
 import { MONTHS } from "./money.js";
 import { useWorkspace } from "./workspace.jsx";
 import Icon from "./components/Icon.jsx";
+import LoginView from "./views/LoginView.jsx";
 import DashboardView from "./views/DashboardView.jsx";
 import EngagementView from "./views/EngagementView.jsx";
 import DocumentsView from "./views/DocumentsView.jsx";
@@ -36,6 +37,16 @@ export default function App() {
   const state = useWorkspace();
   const [conn, setConn] = useState(null);
   const [firm, setFirm] = useState(null);
+  const [user, setUser] = useState(undefined);
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    return onUnauthorized(() => {
+      setUser(null);
+      setFirm(null);
+      setExpired(true);
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,8 +55,15 @@ export default function App() {
         const status = await api.health();
         if (cancelled) return;
         setConn(status);
-        state.setServerLabel(status.server);
-        if (status.connected) setFirm(await api.firm());
+        state.setServerLabel(status.database || status.engine);
+        const me = await api.me();
+        if (cancelled) return;
+        if (me?.authenticated) {
+          setUser(me.username);
+          if (status.connected) setFirm(await api.firm());
+        } else {
+          setUser(null);
+        }
       } catch {
         if (!cancelled) setTimeout(load, 800);
       }
@@ -53,6 +71,22 @@ export default function App() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  async function handleLoggedIn(username) {
+    setExpired(false);
+    setUser(username);
+    const status = await api.health();
+    setConn(status);
+    state.setServerLabel(status.database || status.engine);
+    if (status.connected) setFirm(await api.firm());
+  }
+
+  async function logout() {
+    await api.logout();
+    setUser(null);
+    setFirm(null);
+    setExpired(false);
+  }
 
   const views = {
     oversikt: <DashboardView />,
@@ -75,8 +109,7 @@ export default function App() {
           <p className="kicker">SQLite</p>
           <h1 className="title">Kunde inte ansluta</h1>
           <article className="card">
-            <p>Bokflöde kunde inte öppna SQLite-filen {conn.database}.</p>
-            <p className="muted" style={{ marginTop: "0.75rem" }}>{conn.error}</p>
+            <p>Bokflöde kunde inte öppna databasen {conn.database}.</p>
             <p className="muted" style={{ marginTop: "0.75rem" }}>
               Kontrollera att mappen data/ går att skriva. Filen skapas automatiskt som data/bokflode.sqlite.
             </p>
@@ -84,6 +117,18 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (user === undefined) {
+    return (
+      <div className="app-shell">
+        <div className="wrap"><p className="muted">Öppnar registret…</p></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginView expired={expired} onLoggedIn={handleLoggedIn} />;
   }
 
   if (!firm) {
@@ -110,18 +155,23 @@ export default function App() {
               <h1 className="title">Bokflöde</h1>
               <p className="lede">{ledeParts.join(" · ")}</p>
             </div>
-            <label className="period-field">
-              Period
-              <select
-                className="field"
-                value={state.month}
-                onChange={(e) => state.setMonth(Number(e.target.value))}
-              >
-                {MONTHS.map((name, i) => (
-                  <option key={name} value={i + 1}>{name}</option>
-                ))}
-              </select>
-            </label>
+            <div className="header-actions">
+              <label className="period-field">
+                Period
+                <select
+                  className="field"
+                  value={state.month}
+                  onChange={(e) => state.setMonth(Number(e.target.value))}
+                >
+                  {MONTHS.map((name, i) => (
+                    <option key={name} value={i + 1}>{name}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" className="btn btn-ghost" onClick={logout}>
+                <Icon name="logout" /> Logga ut
+              </button>
+            </div>
           </div>
         </div>
       </header>

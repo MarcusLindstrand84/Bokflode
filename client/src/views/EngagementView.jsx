@@ -77,10 +77,10 @@ export default function EngagementView({ onSaved }) {
           <p className="muted">Hämtar databasstatus…</p>
         ) : (
           <>
-            <p className="muted">All bokföring sparas i en lokal SQLite-fil. Samma regler som i byrån: debet = kredit, underlag före bokföring, bankavstämning före lås.</p>
+            <p className="muted">All bokföring sparas i en lokal SQLite-fil. Samma regler som i byrån: debet = kredit, underlag före bokföring, avstämning före lås.</p>
             <ul className="stack-sm" style={{ fontSize: "0.875rem", listStyle: "none", padding: 0, margin: "0.25rem 0 0" }}>
               <li>Motor: {conn.engine}</li>
-              <li>Fil: {conn.server}</li>
+              <li>Databas: {conn.database}</li>
               <li>Konton: {conn.accountCount}</li>
               <li>Verifikationer: {conn.voucherCount}</li>
             </ul>

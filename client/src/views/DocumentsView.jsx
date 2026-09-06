@@ -26,6 +26,11 @@ export default function DocumentsView() {
       try {
         const data = await api.documents(state.year, state.month);
         if (cancelled) return;
+        if (!Array.isArray(data)) {
+          setError(data?.error || "Kunde inte hämta underlag.");
+          setRows([]);
+          return;
+        }
         setRows(data);
         setError(null);
       } catch {
@@ -46,7 +51,7 @@ export default function DocumentsView() {
       amount: parseAmount(form.amount),
       note: form.note
     });
-    if (!res.ok) { setError(res.error); return; }
+    if (!res.ok) { setError(res.error || "Kunde inte spara underlaget."); return; }
     setForm((f) => ({ ...f, reference: "", amount: "", note: "" }));
     state.refresh();
   }

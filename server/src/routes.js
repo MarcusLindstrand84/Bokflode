@@ -4,16 +4,23 @@ import * as accounting from "./accounting.js";
 
 export const router = Router();
 
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
 const wrap = (fn) => async (req, res) => {
   try {
     const isHealth = req.path === "/health" || req.originalUrl.startsWith("/api/health");
     if (!dbStatus.connected && !isHealth) {
-      return res.status(503).json({ ok: false, error: dbStatus.error || "Ingen databasanslutning." });
+      return res.status(503).json({ ok: false, error: "Ingen databasanslutning." });
     }
     await fn(req, res);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({
+      ok: false,
+      error: isProduction() ? "Ett oväntat fel uppstod." : (e.message || "Ett oväntat fel uppstod.")
+    });
   }
 };
 
@@ -48,9 +55,12 @@ router.post("/vouchers", wrap(async (req, res) => {
   res.json(await accounting.createVoucher(date, text, lines ?? [], documentId));
 }));
 
-router.delete("/vouchers/:id", wrap(async (req, res) => {
-  res.json(await accounting.deleteVoucher(Number(req.params.id)));
-}));
+router.delete("/vouchers/:id", (_req, res) => {
+  res.status(405).json({
+    ok: false,
+    error: "Verifikationer raderas inte. Bokför en rättelse i en öppen period."
+  });
+});
 
 router.post("/vouchers/:id/reverse", wrap(async (req, res) => {
   res.json(await accounting.reverseVoucher(Number(req.params.id), req.body?.date));

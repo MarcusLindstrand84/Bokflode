@@ -1,15 +1,23 @@
-import { all, get, run, withTx, dbStatus } from "./db.js";
+import { all, get, run, withTx, dbStatus, appendAudit } from "./db.js";
 import {
   round2,
   toOre,
+  fromOre,
   signedBalance,
   tryDate,
   monthBounds,
-  formatAmount
+  formatAmount,
+  DOC_KINDS,
+  RECON_KINDS,
+  RESULT_ACCOUNT,
+  reconLabel
 } from "./money.js";
 
 const ok = (extra = {}) => ({ ok: true, error: null, ...extra });
 const fail = (error) => ({ ok: false, error });
+
+const DOC_KIND_SET = new Set(DOC_KINDS);
+const RECON_KIND_SET = new Set(RECON_KINDS);
 
 function ensurePeriods(year) {
   const ins = (month) => run("INSERT OR IGNORE INTO periods (year, month, locked) VALUES (?, ?, 0)", year, month);
@@ -28,8 +36,8 @@ function loadBalances(from, to) {
   const map = Object.fromEntries(sums.map((s) => [s.account, s]));
   return accounts.map((a) => {
     const s = map[a.number];
-    const debit = round2(s?.debit ?? 0);
-    const credit = round2(s?.credit ?? 0);
+    const debit = fromOre(s?.debit ?? 0);
+    const credit = fromOre(s?.credit ?? 0);
     return {
       number: a.number,
       name: a.name,
@@ -55,8 +63,8 @@ function loadVouchers(year) {
     voucherNo: r.voucherNo,
     date: r.date,
     text: r.text,
-    debit: round2(r.debit),
-    credit: round2(r.credit)
+    debit: fromOre(r.debit),
+    credit: fromOre(r.credit)
   }));
 }
 
@@ -67,6 +75,7 @@ function accountMap() {
 }
 
 function bookBalance(year, month, kind) {
+  if (!RECON_KIND_SET.has(kind)) return null;
   const from = `${year}-01-01`;
   const { to } = monthBounds(year, month);
   const balances = loadBalances(from, to);
@@ -75,7 +84,8 @@ function bookBalance(year, month, kind) {
     case "bank": return round2(bal("1910") + bal("1930"));
     case "kund": return bal("1510");
     case "leverantor": return bal("2440");
-    default: return round2(bal("2610") - bal("2640"));
+    case "moms": return round2(bal("2610") - bal("2640"));
+    default: return null;
   }
 }
 
@@ -85,11 +95,29 @@ function loadRecons(year, month) {
     year, month
   ).map((r) => ({
     kind: r.kind,
-    bookBalance: r.book_balance,
-    statementBalance: r.statement_balance,
+    bookBalance: fromOre(r.book_balance),
+    statementBalance: fromOre(r.statement_balance),
     ok: Boolean(r.ok),
     note: r.note
   }));
+}
+
+function periodCloseState(year, month) {
+  const { from, to } = monthBounds(year, month);
+  const unbooked = get(
+    "SELECT COUNT(*) AS n FROM documents WHERE status = 'inkommet' AND received_date >= ? AND received_date <= ?",
+    from, to
+  ).n;
+  const recons = loadRecons(year, month);
+  const byKind = Object.fromEntries(recons.map((r) => [r.kind, r]));
+  const kindOk = (k) => Boolean(byKind[k]?.ok);
+  const missing = RECON_KINDS.filter((k) => !kindOk(k));
+  return {
+    unbooked,
+    kindOk,
+    missing,
+    canLock: unbooked === 0 && missing.length === 0
+  };
 }
 
 function mapDoc(d) {
@@ -98,11 +126,18 @@ function mapDoc(d) {
     receivedDate: d.received_date,
     kind: d.kind,
     reference: d.reference,
-    amount: d.amount,
+    amount: fromOre(d.amount),
     status: d.status,
     voucherId: d.voucher_id,
     note: d.note
   };
+}
+
+function normalizeDocumentId(documentId) {
+  if (documentId == null || documentId === "") return null;
+  const id = Number(documentId);
+  if (!Number.isInteger(id) || id <= 0) return { error: "Ogiltigt underlag." };
+  return { id };
 }
 
 function postVoucher(date, text, rawLines, documentId) {
@@ -139,6 +174,15 @@ function postVoucher(date, text, rawLines, documentId) {
     if (!known.has(l.account)) return fail(`Okänt konto ${l.account}.`);
   }
 
+  const docRef = normalizeDocumentId(documentId);
+  if (docRef?.error) return fail(docRef.error);
+  const resolvedDocId = docRef?.id ?? null;
+  if (resolvedDocId != null) {
+    const doc = get("SELECT id, status FROM documents WHERE id = ?", resolvedDocId);
+    if (!doc) return fail("Underlaget finns inte.");
+    if (doc.status !== "inkommet") return fail("Underlaget är inte öppet för bokföring.");
+  }
+
   const last = get("SELECT MAX(number) AS n FROM vouchers WHERE year = ?", year);
   const number = (last?.n ?? 0) + 1;
   const voucherNo = `${year}-${String(number).padStart(3, "0")}`;
@@ -149,16 +193,20 @@ function postVoucher(date, text, rawLines, documentId) {
       year, number, voucherNo, date, text
     );
     const voucherId = Number(info.lastInsertRowid);
-    const insLine = (l) => run(
-      "INSERT INTO voucher_lines (voucher_id, account_number, debit, credit, description) VALUES (?, ?, ?, ?, ?)",
-      voucherId, l.account, l.debit, l.credit, l.description.slice(0, 120)
-    );
-    for (const l of lines) insLine(l);
-    if (documentId != null) {
+    for (const l of lines) {
       run(
-        "UPDATE documents SET status = 'bokfort', voucher_id = ? WHERE id = ? AND status = 'inkommet'",
-        voucherId, documentId
+        "INSERT INTO voucher_lines (voucher_id, account_number, debit, credit, description) VALUES (?, ?, ?, ?, ?)",
+        voucherId, l.account, toOre(l.debit), toOre(l.credit), l.description.slice(0, 120)
       );
+    }
+    if (resolvedDocId != null) {
+      const updated = run(
+        "UPDATE documents SET status = 'bokfort', voucher_id = ? WHERE id = ? AND status = 'inkommet'",
+        voucherId, resolvedDocId
+      );
+      if (updated.changes !== 1) {
+        throw new Error("Underlaget kunde inte kopplas.");
+      }
     }
     return voucherId;
   });
@@ -174,14 +222,14 @@ export function getConnectionStatus() {
       accountCount = get("SELECT COUNT(*) AS n FROM accounts").n;
       voucherCount = get("SELECT COUNT(*) AS n FROM vouchers").n;
     } catch (e) {
+      console.error(e);
       dbStatus.connected = false;
-      dbStatus.error = e.message;
+      dbStatus.error = "Databasen kunde inte öppnas.";
     }
   }
   return {
     connected: dbStatus.connected,
     engine: dbStatus.engine,
-    server: dbStatus.server,
     database: dbStatus.database,
     accountCount,
     voucherCount,
@@ -225,7 +273,7 @@ export function getWorkspace(year) {
     WHERE v.year = ?
     GROUP BY v.id
   `, year);
-  const unbalancedCount = yearSums.filter((v) => toOre(v.debit) !== toOre(v.credit)).length;
+  const unbalancedCount = yearSums.filter((v) => Number(v.debit) !== Number(v.credit)).length;
   const periods = all("SELECT year, month, locked FROM periods WHERE year = ? ORDER BY month", year);
   return {
     year,
@@ -261,8 +309,8 @@ export function getVoucher(id) {
   ).map((l) => ({
     account: l.account_number,
     name: accounts[l.account_number]?.name ?? "",
-    debit: l.debit,
-    credit: l.credit,
+    debit: fromOre(l.debit),
+    credit: fromOre(l.credit),
     description: l.description
   }));
   return {
@@ -280,23 +328,6 @@ export function createVoucher(date, text, lines, documentId) {
   return postVoucher(date, text, lines, documentId ?? null);
 }
 
-export function deleteVoucher(id) {
-  const v = get("SELECT id, voucher_no, voucher_date FROM vouchers WHERE id = ?", id);
-  if (!v) return fail("Verifikationen finns inte.");
-  const year = Number(v.voucher_date.slice(0, 4));
-  const month = Number(v.voucher_date.slice(5, 7));
-  const period = get("SELECT locked FROM periods WHERE year = ? AND month = ?", year, month);
-  if (period?.locked) {
-    return fail("Perioden är låst. Ta inte bort — bokför en rättelse i en öppen period.");
-  }
-  withTx(() => {
-    run("UPDATE documents SET voucher_id = NULL, status = 'inkommet' WHERE voucher_id = ?", v.id);
-    run("DELETE FROM voucher_lines WHERE voucher_id = ?", v.id);
-    run("DELETE FROM vouchers WHERE id = ?", v.id);
-  });
-  return ok({ voucherNo: v.voucher_no, id: v.id });
-}
-
 export function reverseVoucher(id, date) {
   const v = get("SELECT id, voucher_no FROM vouchers WHERE id = ?", id);
   if (!v) return fail("Verifikationen finns inte.");
@@ -305,17 +336,21 @@ export function reverseVoucher(id, date) {
     id
   );
   if (lines.length < 2) return fail("Verifikationen saknar rader.");
-  return postVoucher(
+  const created = postVoucher(
     date,
     `Rättelse av ${v.voucher_no}`,
     lines.map((l) => ({
       account: l.account_number,
-      debit: l.credit,
-      credit: l.debit,
+      debit: fromOre(l.credit),
+      credit: fromOre(l.debit),
       description: `Rättelse ${v.voucher_no}`
     })),
     null
   );
+  if (created.ok) {
+    appendAudit("reverse", `Rättelse av ${v.voucher_no} → ${created.voucherNo}`, true);
+  }
+  return created;
 }
 
 export function getLedger(year, account) {
@@ -341,8 +376,10 @@ export function getLedger(year, account) {
   return rows.map((r) => {
     const acc = accounts[r.account_number];
     const type = acc?.type ?? "";
+    const debit = fromOre(r.debit);
+    const credit = fromOre(r.credit);
     running[r.account_number] = round2(
-      (running[r.account_number] ?? 0) + signedBalance(type, r.debit, r.credit)
+      (running[r.account_number] ?? 0) + signedBalance(type, debit, credit)
     );
     return {
       voucherId: r.voucher_id,
@@ -352,8 +389,8 @@ export function getLedger(year, account) {
       account: r.account_number,
       name: acc?.name ?? "",
       type,
-      debit: r.debit,
-      credit: r.credit,
+      debit,
+      credit,
       balance: running[r.account_number]
     };
   });
@@ -423,20 +460,16 @@ export function closePeriod(year, month) {
   const period = get("SELECT locked FROM periods WHERE year = ? AND month = ?", year, month);
   if (!period) return fail("Ogiltig månad.");
   if (period.locked) return fail("Perioden är redan låst.");
-  const { from, to } = monthBounds(year, month);
-  const unbooked = get(
-    "SELECT COUNT(*) AS n FROM documents WHERE status = 'inkommet' AND received_date >= ? AND received_date <= ?",
-    from, to
-  ).n;
-  if (unbooked > 0) {
-    return fail(`${unbooked} underlag är obokade. Bokför eller markera saknade innan lås.`);
+  const state = periodCloseState(year, month);
+  if (state.unbooked > 0) {
+    return fail(`${state.unbooked} underlag är obokade. Bokför eller markera saknade innan lås.`);
   }
-  const bank = get(
-    "SELECT ok FROM reconciliations WHERE year = ? AND month = ? AND kind = 'bank'",
-    year, month
-  );
-  if (!bank?.ok) return fail("Bankavstämning måste vara godkänd innan perioden låses.");
+  if (state.missing.length > 0) {
+    const labels = state.missing.map((k) => reconLabel(k)).join(", ");
+    return fail(`Godkänd avstämning krävs för bank, kund, leverantör och moms innan perioden låses. Saknas: ${labels}.`);
+  }
   run("UPDATE periods SET locked = 1 WHERE year = ? AND month = ?", year, month);
+  appendAudit("period_close", `${year}-${String(month).padStart(2, "0")}`, true);
   return ok();
 }
 
@@ -454,11 +487,12 @@ export function yearEndClose(year) {
   const result = round2(
     income.reduce((s, b) => s + b.balance, 0) - expense.reduce((s, b) => s + b.balance, 0)
   );
-  if (result > 0) lines.push({ account: "2010", debit: 0, credit: result, description: "Årets vinst" });
-  if (result < 0) lines.push({ account: "2010", debit: -result, credit: 0, description: "Årets förlust" });
+  if (result > 0) lines.push({ account: RESULT_ACCOUNT, debit: 0, credit: result, description: "Årets vinst" });
+  if (result < 0) lines.push({ account: RESULT_ACCOUNT, debit: -result, credit: 0, description: "Årets förlust" });
   const created = postVoucher(`${year}-12-31`, "Årets resultatöverföring", lines, null);
   if (!created.ok) return created;
   run("UPDATE periods SET locked = 1 WHERE year = ? AND month = 12", year);
+  appendAudit("year_end", `${year} → ${created.voucherNo} på ${RESULT_ACCOUNT}`, true);
   return { ...created, amount: result };
 }
 
@@ -514,12 +548,15 @@ export function listDocuments(year, month) {
 
 export function addDocument(receivedDate, kind, reference, amount, note) {
   if (!tryDate(receivedDate)) return fail("Ogiltigt datum.");
+  if (!DOC_KIND_SET.has(kind)) return fail("Okänd underlagstyp.");
   const r = String(reference ?? "").trim();
   if (r.length < 2) return fail("Referens saknas.");
   const n = String(note ?? "").trim();
+  const kronor = round2(amount ?? 0);
+  if (kronor < 0) return fail("Belopp får inte vara negativa.");
   run(
     "INSERT INTO documents (received_date, kind, reference, amount, status, note) VALUES (?, ?, ?, ?, 'inkommet', ?)",
-    receivedDate, kind, r.slice(0, 80), round2(amount ?? 0), n.slice(0, 160)
+    receivedDate, kind, r.slice(0, 80), toOre(kronor), n.slice(0, 160)
   );
   return ok();
 }
@@ -543,7 +580,10 @@ export function listRecons(year, month) {
 }
 
 export function saveRecon(year, month, kind, statementBalance, note) {
+  if (!RECON_KIND_SET.has(kind)) return fail("Okänd avstämningstyp.");
+  if (!Number.isInteger(Number(month)) || month < 1 || month > 12) return fail("Ogiltig månad.");
   const book = bookBalance(year, month, kind);
+  if (book == null) return fail("Okänd avstämningstyp.");
   const statement = round2(statementBalance);
   const isOk = toOre(book) === toOre(statement);
   let trimmed = String(note ?? "").trim();
@@ -556,7 +596,7 @@ export function saveRecon(year, month, kind, statementBalance, note) {
       statement_balance = excluded.statement_balance,
       ok = excluded.ok,
       note = excluded.note
-  `, year, month, kind, book, statement, isOk ? 1 : 0, trimmed);
+  `, year, month, kind, toOre(book), toOre(statement), isOk ? 1 : 0, trimmed);
   return ok();
 }
 
@@ -572,10 +612,7 @@ export function setCloseFlag(year, month, flag, done) {
 
 export function getPipeline(year, month) {
   const { from, to } = monthBounds(year, month);
-  const unbooked = get(
-    "SELECT COUNT(*) AS n FROM documents WHERE status = 'inkommet' AND received_date >= ? AND received_date <= ?",
-    from, to
-  ).n;
+  const close = periodCloseState(year, month);
   const documentCount = get(
     "SELECT COUNT(*) AS n FROM documents WHERE received_date >= ? AND received_date <= ?",
     from, to
@@ -584,16 +621,14 @@ export function getPipeline(year, month) {
     "SELECT COUNT(*) AS n FROM vouchers WHERE year = ? AND voucher_date >= ? AND voucher_date <= ?",
     year, from, to
   ).n;
-  const recons = loadRecons(year, month);
-  const byKind = Object.fromEntries(recons.map((r) => [r.kind, r]));
-  const kindOk = (k) => Boolean(byKind[k]?.ok);
   const flags = all("SELECT flag, done FROM close_flags WHERE year = ? AND month = ?", year, month);
   const flagDone = (name) => flags.some((f) => f.flag === name && f.done);
   const period = get("SELECT locked FROM periods WHERE year = ? AND month = ?", year, month);
   const firmCount = get("SELECT COUNT(*) AS n FROM firm_settings").n;
+  const kindOk = close.kindOk;
   const steps = [
     { id: "uppdrag", label: "Uppdrag", done: firmCount > 0, hint: firmCount > 0 ? "Uppdrag sparat" : "Fyll i klient och uppdrag" },
-    { id: "underlag", label: "Underlag", done: unbooked === 0 && documentCount > 0, hint: `${unbooked} obokade underlag` },
+    { id: "underlag", label: "Underlag", done: close.unbooked === 0 && documentCount > 0, hint: `${close.unbooked} obokade underlag` },
     { id: "bokfor", label: "Löpande bokföring", done: voucherCount > 0, hint: `${voucherCount} verifikationer i perioden` },
     { id: "avstamning", label: "Avstämning", done: kindOk("bank") && kindOk("kund") && kindOk("leverantor"), hint: kindOk("bank") ? "Bank avstämd" : "Bank ej avstämd" },
     { id: "moms", label: "Moms", done: kindOk("moms"), hint: kindOk("moms") ? "Momsavstämning klar" : "Moms ej avstämd" },
@@ -601,7 +636,7 @@ export function getPipeline(year, month) {
     { id: "kundrapport", label: "Kundrapport", done: flagDone("leverans"), hint: flagDone("leverans") ? "Levererad" : "Ej levererad" }
   ];
   return {
-    unbooked,
+    unbooked: close.unbooked,
     documentCount,
     voucherCount,
     bankOk: kindOk("bank"),
@@ -611,7 +646,7 @@ export function getPipeline(year, month) {
     locked: Boolean(period?.locked),
     reportsReviewed: flagDone("rapporter"),
     delivered: flagDone("leverans"),
-    canLock: unbooked === 0 && kindOk("bank"),
+    canLock: close.canLock,
     steps
   };
 }

@@ -11,7 +11,9 @@ export default function LedgerView() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    api.accounts().then(setAccounts).catch(() => setError("Kunde inte hämta kontoplanen."));
+    api.accounts()
+      .then((data) => setAccounts(Array.isArray(data) ? data : []))
+      .catch(() => setError("Kunde inte hämta kontoplanen."));
   }, []);
 
   useEffect(() => {
@@ -20,6 +22,11 @@ export default function LedgerView() {
       try {
         const data = await api.ledger(state.year, account);
         if (cancelled) return;
+        if (!Array.isArray(data)) {
+          setError(data?.error || "Kunde inte hämta huvudboken.");
+          setRows([]);
+          return;
+        }
         setRows(data);
         setError(null);
       } catch {

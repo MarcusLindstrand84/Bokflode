@@ -63,7 +63,10 @@ export default function PeriodCloseView() {
     <div className="stack">
       <div>
         <h2>Periodavslut</h2>
-        <p className="lede">Byrån låser inte en månad förrän obokade underlag är noll och banken stämmer. Rättelse i öppen period.</p>
+        <p className="lede">
+          Byrån låser inte en månad förrän obokade underlag är noll och avstämning är godkänd för bank, kund, leverantör och moms.
+          Verifikationer raderas inte — bokför rättelse i en öppen period.
+        </p>
       </div>
       {pipe && (
         <ul className="check-grid">
@@ -89,7 +92,7 @@ export default function PeriodCloseView() {
         ))}
       </ul>
       <button type="button" className="btn btn-primary" disabled={busy} onClick={yearEnd}>Årsbokslut — överför resultatet</button>
-      {error && <p className="stamp">{error}</p>}
+      {error && <p className="stamp" role="alert">{error}</p>}
       {msg && <p className="ledger">{msg}</p>}
     </div>
   );

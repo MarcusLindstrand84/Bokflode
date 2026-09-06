@@ -35,7 +35,7 @@ export default function ReconcileView() {
   async function save(kind) {
     setBusy(kind);
     setError(null);
-    await api.saveRecon({
+    const res = await api.saveRecon({
       year: state.year,
       month: state.month,
       kind,
@@ -43,6 +43,7 @@ export default function ReconcileView() {
       note: ""
     });
     setBusy(null);
+    if (!res.ok) { setError(res.error || "Kunde inte spara avstämningen."); return; }
     state.refresh();
   }
 
@@ -60,7 +61,7 @@ export default function ReconcileView() {
         <h2>Avstämning · {MONTHS[state.month - 1]}</h2>
         <p className="lede">
           Jämför bokens saldo (ackumulerat till periodens sista dag) med underlag: kontoutdrag, reskontra och momsspecifikation.
-          Banken måste stämma innan månaden får låsas.
+          Bank, kund, leverantör och moms måste stämma innan månaden får låsas.
         </p>
       </div>
       {error && <p className="stamp">{error}</p>}

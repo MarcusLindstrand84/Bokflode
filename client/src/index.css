@@ -119,6 +119,24 @@ a { color: var(--ledger); }
     margin-top: var(--space-3);
 }
 
+.header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+}
+
+.login-shell {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: var(--page);
+}
+
+.login-card {
+    width: min(24rem, 100%);
+}
+
 .title {
     font-size: clamp(1.75rem, 1.2rem + 2vw, 2.25rem);
     line-height: 1.15;

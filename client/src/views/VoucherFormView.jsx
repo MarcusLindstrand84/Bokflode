@@ -33,7 +33,7 @@ export default function VoucherFormView() {
   const applied = useRef(null);
 
   useEffect(() => {
-    api.accounts().then(setAccounts);
+    api.accounts().then((data) => setAccounts(Array.isArray(data) ? data : []));
   }, []);
 
   useEffect(() => {

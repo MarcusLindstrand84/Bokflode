@@ -8,7 +8,14 @@ export default function AccountsView() {
 
   useEffect(() => {
     api.accounts()
-      .then(setRows)
+      .then((data) => {
+        if (!Array.isArray(data)) {
+          setError(data?.error || "Kunde inte hämta kontoplanen.");
+          setRows([]);
+          return;
+        }
+        setRows(data);
+      })
       .catch(() => setError("Kunde inte hämta kontoplanen."));
   }, []);
 

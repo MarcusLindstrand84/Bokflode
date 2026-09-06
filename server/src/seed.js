@@ -1,3 +1,5 @@
+import { toOre } from "./money.js";
+
 const ACCOUNTS = [
   ["1510", "Kundfordringar", "tillgang", null, 10],
   ["1910", "Kassa", "tillgang", null, 20],
@@ -33,7 +35,7 @@ function insertVoucher(db, id, year, number, no, date, text, lines) {
     VALUES (?, ?, ?, ?, ?)
   `);
   for (const [account, debit, credit, description] of lines) {
-    line.run(id, account, debit, credit, description);
+    line.run(id, account, toOre(debit), toOre(credit), description);
   }
 }
 
@@ -93,13 +95,13 @@ export function seed(db) {
       INSERT INTO documents (id, received_date, kind, reference, amount, status, voucher_id, note)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    ins.run(1, "2026-01-02", "bank", "Ingående saldo", 50000, "bokfort", byNo["2026-001"], "Bankbesked januari");
-    ins.run(2, "2026-03-12", "kvitto", "Kassa 312", 12500, "bokfort", byNo["2026-002"], "Kontantförsäljning");
-    ins.run(3, "2026-04-03", "leverantorsfaktura", "LF-8841", 5000, "bokfort", byNo["2026-003"], "Material inköp");
-    ins.run(4, "2026-08-01", "leverantorsfaktura", "Hyra-08", 10000, "bokfort", byNo["2026-004"], "Lokalhyra augusti");
-    ins.run(5, "2026-08-15", "bank", "Avgift augusti", 45, "bokfort", byNo["2026-005"], "Bankavgift");
-    ins.run(6, "2026-08-18", "leverantorsfaktura", "LF-9102", 3750, "inkommet", null, "Kontorsmateriel, 25 % moms");
-    ins.run(7, "2026-08-21", "kvitto", "Kvitto-219", 89, "inkommet", null, "Förbrukningsmaterial");
-    ins.run(8, "2026-08-22", "bank", "Kontoutdrag aug", 0, "inkommet", null, "Väntar på avstämning mot 1930");
+    ins.run(1, "2026-01-02", "bank", "Ingående saldo", toOre(50000), "bokfort", byNo["2026-001"], "Bankbesked januari");
+    ins.run(2, "2026-03-12", "kvitto", "Kassa 312", toOre(12500), "bokfort", byNo["2026-002"], "Kontantförsäljning");
+    ins.run(3, "2026-04-03", "leverantorsfaktura", "LF-8841", toOre(5000), "bokfort", byNo["2026-003"], "Material inköp");
+    ins.run(4, "2026-08-01", "leverantorsfaktura", "Hyra-08", toOre(10000), "bokfort", byNo["2026-004"], "Lokalhyra augusti");
+    ins.run(5, "2026-08-15", "bank", "Avgift augusti", toOre(45), "bokfort", byNo["2026-005"], "Bankavgift");
+    ins.run(6, "2026-08-18", "leverantorsfaktura", "LF-9102", toOre(3750), "inkommet", null, "Kontorsmateriel, 25 % moms");
+    ins.run(7, "2026-08-21", "kvitto", "Kvitto-219", toOre(89), "inkommet", null, "Förbrukningsmaterial");
+    ins.run(8, "2026-08-22", "bank", "Kontoutdrag aug", toOre(0), "inkommet", null, "Väntar på avstämning mot 1930");
   }
 }
